@@ -1,13 +1,6 @@
-#include "ros/ros.h"
-#include "sensor_msgs/Image.h"
-#include "opencv2/core/core.hpp"
-#include "opencv2/imgproc.hpp"
-#include "opencv2/highgui.hpp"
-#include <camera_model/camera_models/CameraFactory.h>
-#include "cv_bridge/cv_bridge.h"
-#include <filesystem>
+#include "fisheyeFlattener_node.hpp"
 
-#define DEG_TO_RAD (M_PI * 2.0 / 360.0)
+#define DEG_TO_RAD (M_PI / 180.0)
 
 namespace globalVar
 {
@@ -17,18 +10,10 @@ std::string camFilePath;
 camera_model::CameraPtr cam;
 Eigen::Vector3d cameraRotation;
 int imgWidth = 0;
-double fov0 = 0;
-double fov1 = 0;
-std::array<cv::Mat, 5> undistMaps;
-ros::Publisher img_pub[5];
+double fov = 0; //in degree
+std::vector<cv::Mat> undistMaps;
+std::vector<ros::Publisher> img_pub;
 } // namespace globalVar
-
-std::array<cv::Mat, 5> generateUndistMap(
-    camera_model::CameraPtr p_cam,
-    Eigen::Vector3d rotation,
-    const unsigned &imgWidth,
-    const double &fov //degree
-);
 
 void imgCB(const sensor_msgs::Image::ConstPtr &msg);
 
@@ -54,15 +39,14 @@ int main(int argc, char **argv)
     nh.param<double>("rotationVectorX", cameraRotation.x(), 0);
     nh.param<double>("rotationVectorY", cameraRotation.y(), 0);
     nh.param<double>("rotationVectorZ", cameraRotation.z(), 0);
-    nh.param<double>("fov0", fov0, 90);
-    nh.param<double>("fov1", fov1, 90);
+    nh.param<double>("fov", fov, 90);
     nh.param<int>("imgWidth", imgWidth, 500);
     if (imgWidth <= 0)
     {
         ROS_ERROR("Resolution must be non-negative");
         return 1;
     }
-    if (fov0 <= 0 || fov1 <= 0)
+    if (fov < 0)
     {
         ROS_ERROR("FOV must be non-negative");
         return 1;
@@ -71,76 +55,157 @@ int main(int argc, char **argv)
     nh.param<std::string>("inputTopic", inputTopic, "img");
     nh.param<std::string>("outputTopicPrefix", outputTopicPrefix, "flatImg");
 
-    undistMaps = generateUndistMap(cam, cameraRotation, 100, 270);
+    undistMaps = generateAllUndistMap(cam, cameraRotation, imgWidth, fov);
 
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < undistMaps.size(); i++)
     {
-        img_pub[i] = nh.advertise<sensor_msgs::Image>(outputTopicPrefix + "_" + std::to_string(i), 3);
+        img_pub.push_back(nh.advertise<sensor_msgs::Image>(outputTopicPrefix + "_" + std::to_string(i), 3));
     }
     ros::Subscriber img_sub = nh.subscribe(inputTopic, 3, imgCB);
     ros::spin();
     return 0;
 }
 
-void imgCB(const sensor_msgs::Image::ConstPtr &msg){
-
+void imgCB(const sensor_msgs::Image::ConstPtr &msg)
+{
+    cv_bridge::CvImagePtr cv_ptr;
+    try
+    {
+        cv_ptr = cv_bridge::toCvCopy(msg);
+    }
+    catch (cv_bridge::Exception &e)
+    {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+        return;
+    }
+    for (int i = 0; i < globalVar::undistMaps.size(); i++)
+    {
+        cv_bridge::CvImage outImg;
+        outImg.header = msg->header;
+        outImg.encoding = msg->encoding;
+        cv::remap(cv_ptr->image, outImg.image, globalVar::undistMaps[i], cv::Mat(), cv::INTER_LINEAR);
+        globalVar::img_pub[i].publish(outImg);
+    }
 };
 
-std::array<cv::Mat, 5> generateUndistMap(
+std::vector<cv::Mat> generateAllUndistMap(
     camera_model::CameraPtr p_cam,
     Eigen::Vector3d rotation,
     const unsigned &imgWidth,
     const double &fov //degree
 )
 {
-    Eigen::Vector2d temp;
-    p_cam->spaceToPlane(rotation, temp);
-    std::cout << "rotation on img plane:\n"
-              << temp << std::endl;
-
+    ROS_INFO("Generating undistortion maps:");
     double sideVerticalFOV = (fov - 180) * DEG_TO_RAD;
-    double centerFOV = M_PI * 2 - fov;
+    if (sideVerticalFOV < 0)
+        sideVerticalFOV = 0;
+    double centerFOV = fov * DEG_TO_RAD - sideVerticalFOV * 2;
+    ROS_INFO("Center FOV: %f_center", centerFOV);
     int sideImgHeight = sideVerticalFOV / centerFOV * imgWidth;
-    std::array<cv::Mat, 5> maps;
-    maps[0] = cv::Mat(imgWidth, imgWidth, CV_32FC2);
-    for (int i = 1; i < 5; i++)
-        maps[1] = cv::Mat(imgWidth, sideImgHeight, CV_32FC2);
+    ROS_INFO("Side image height: %d", sideImgHeight);
+    std::vector<cv::Mat> maps;
+    maps.reserve(5);
 
-    // rotation applied for all points
+    // test points
+    Eigen::Vector3d testPoints[] = {
+        Eigen::Vector3d(0, 0, 1),
+        Eigen::Vector3d(1, 0, 1),
+        Eigen::Vector3d(0, 1, 1),
+        Eigen::Vector3d(1, 1, 1),
+    };
+    for (int i = 0; i < sizeof(testPoints) / sizeof(Eigen::Vector3d); i++)
+    {
+        Eigen::Vector2d temp;
+        p_cam->spaceToPlane(testPoints[i], temp);
+        ROS_INFO("Test point %d : (%.2f,%.2f,%.2f) projected to (%.2f,%.2f)", i,
+                 testPoints[i][0], testPoints[i][1], testPoints[i][2],
+                 temp[0], temp[1]);
+    }
+
+    // center pinhole camera orientation
     Eigen::AngleAxis t = Eigen::AngleAxis<double>(rotation.norm(), rotation.normalized()).inverse();
 
-    // calculate focal length of fake pinhole cameras
-    double f = imgWidth / 2 / tan(fov / 2);
+    // calculate focal length of fake pinhole cameras (pixel size = 1 unit)
+    double f_center = (double)imgWidth / 2 / tan(centerFOV / 2);
+    double f_side = (double)imgWidth / 2;
+    ROS_INFO("Pinhole cameras focal length: %f_center", f_center);
+    maps.push_back(genOneUndistMap(p_cam, t, imgWidth, imgWidth, f_center));
 
-    //center
-    for (int x = 0; x < imgWidth; x++)
-        for (int y = 0; y < imgWidth; y++)
-        {
-            Eigen::Vector3d objPoint =
-                t * Eigen::Vector3d((x - (double)imgWidth / 2) / f,
-                                    (y - (double)imgWidth / 2) / f,
-                                    1);
-            Eigen::Vector2d imgPoint;
-            p_cam->spaceToPlane(objPoint, imgPoint);
-            maps[0].at<cv::Vec2f>(cv::Point(x, y)) = cv::Vec2f(imgPoint.x(), imgPoint.y());
-        }
+    if (sideImgHeight > 0)
+    {
+        //facing y
+        t = t * Eigen::AngleAxis<double>(-M_PI / 2, Eigen::Vector3d(1, 0, 0));
+        maps.push_back(genOneUndistMap(p_cam, t, imgWidth, sideImgHeight, f_side));
 
-    std::cout << "Center range:\n"
-              << maps[0].at<cv::Vec2f>(cv::Point(0, 0)) << std::endl
-              << maps[0].at<cv::Vec2f>(cv::Point(imgWidth - 1, imgWidth - 1)) << std::endl;
-
-    //x direction
-    for (int x = 0; x < imgWidth; x++)
-        for (int y = 0; y < sideImgHeight; y++)
-        {
-            Eigen::Vector3d objPoint =
-                t * Eigen::Vector3d(1,
-                                    ((double)x - (double)imgWidth / 2) / f,
-                                    ((double)y - (double)sideImgHeight / 2) / f);
-            Eigen::Vector2d imgPoint;
-            p_cam->spaceToPlane(objPoint, imgPoint);
-            maps[1].at<cv::Vec2f>(cv::Point(x, y)) = cv::Vec2f(imgPoint.x(), imgPoint.y());
-        }
-
+        //turn right/left?
+        t = t * Eigen::AngleAxis<double>(M_PI / 2, Eigen::Vector3d(0, 1, 0));
+        maps.push_back(genOneUndistMap(p_cam, t, imgWidth, sideImgHeight, f_side));
+        t = t * Eigen::AngleAxis<double>(M_PI / 2, Eigen::Vector3d(0, 1, 0));
+        maps.push_back(genOneUndistMap(p_cam, t, imgWidth, sideImgHeight, f_side));
+        t = t * Eigen::AngleAxis<double>(M_PI / 2, Eigen::Vector3d(0, 1, 0));
+        maps.push_back(genOneUndistMap(p_cam, t, imgWidth, sideImgHeight, f_side));
+    }
     return maps;
+}
+
+/**
+ * @brief 
+ * 
+ * @param p_cam 
+ * @param rotation rotational offset from normal
+ * @param imgWidth 
+ * @param imgHeight 
+ * @param f_center focal length in pin hole camera camera_mode (pixels are 1 unit sized)
+ * @return CV_32FC2 mapping matrix 
+ */
+cv::Mat genOneUndistMap(
+    camera_model::CameraPtr p_cam,
+    Eigen::AngleAxis<double> rotation,
+    const unsigned &imgWidth,
+    const unsigned &imgHeight,
+    const double &f_center)
+{
+    cv::Mat map = cv::Mat(imgHeight, imgWidth, CV_32FC2);
+    ROS_INFO("Generating map of size (%d,%d)", map.size[0], map.size[1]);
+    ROS_INFO("Perspective facing (%.2f,%.2f,%.2f)",
+             rotation._transformVector(Eigen::Vector3d(0, 0, 1))[0],
+             rotation._transformVector(Eigen::Vector3d(0, 0, 1))[1],
+             rotation._transformVector(Eigen::Vector3d(0, 0, 1))[2]);
+    for (int x = 0; x < imgWidth; x++)
+        for (int y = 0; y < imgHeight; y++)
+        {
+            Eigen::Vector3d objPoint =
+                rotation *
+                Eigen::Vector3d(
+                    ((double)x - (double)imgWidth / 2),
+                    ((double)y - (double)imgHeight / 2),
+                    f_center);
+            Eigen::Vector2d imgPoint;
+            p_cam->spaceToPlane(objPoint, imgPoint);
+            map.at<cv::Vec2f>(cv::Point(x, y)) = cv::Vec2f(imgPoint.x(), imgPoint.y());
+        }
+
+    ROS_INFO("Upper corners: (%.2f, %.2f), (%.2f, %.2f)",
+             map.at<cv::Vec2f>(cv::Point(0, 0))[0],
+             map.at<cv::Vec2f>(cv::Point(0, 0))[1],
+             map.at<cv::Vec2f>(cv::Point(imgWidth - 1, 0))[0],
+             map.at<cv::Vec2f>(cv::Point(imgWidth - 1, 0))[1]);
+
+    Eigen::Vector3d objPoint =
+        rotation *
+        Eigen::Vector3d(
+            ((double)0 - (double)imgWidth / 2),
+            ((double)0 - (double)imgHeight / 2),
+            f_center);
+    std::cout << objPoint << std::endl;
+
+    objPoint =
+        rotation *
+        Eigen::Vector3d(
+            ((double)imgWidth / 2),
+            ((double)0 - (double)imgHeight / 2),
+            f_center);
+    std::cout << objPoint << std::endl;
+
+    return map;
 }
