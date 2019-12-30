@@ -27,7 +27,7 @@ int main(int argc, char **argv)
     // obtain camera intrinsics
     nh.param<std::string>("cam_file", camFilePath, "cam.yaml");
     ROS_INFO(camFilePath.c_str());
-    if (!std::filesystem::exists(camFilePath))
+    if (!std::experimental::filesystem::exists(camFilePath))
     {
         ROS_ERROR("Camera file does not exist.");
         return 1;
@@ -123,7 +123,7 @@ std::vector<cv::Mat> generateAllUndistMap(
     }
 
     // center pinhole camera orientation
-    Eigen::AngleAxis t = Eigen::AngleAxis<double>(rotation.norm(), rotation.normalized()).inverse();
+    auto t = Eigen::AngleAxis<double>(rotation.norm(), rotation.normalized()).inverse();
 
     // calculate focal length of fake pinhole cameras (pixel size = 1 unit)
     double f_center = (double)imgWidth / 2 / tan(centerFOV / 2);
