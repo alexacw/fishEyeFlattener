@@ -1,6 +1,6 @@
 <launch>
     <node pkg="fisheye_flattener" type="fisheye_flattener_node" name="flattener" output="screen">
-        <param name="cam_file" type ="string" value="/home/acw/Desktop/calib_images/CM3_fish_camera_calib.yaml"/>
+        <param name="cam_file" type ="string" value="$(find fisheye_flattener)/config/CM3_fish_camera_calib.yaml"/>
         <param name="inputTopic" type ="string" value="/pg_17591763/image_raw"/>
         <param name="outputTopicPrefix" type="string" value="flatImage"/>
         <!-- rotationVector: addition rotational offset for remapping  -->
