@@ -1,16 +1,16 @@
 <launch>
-    <node pkg="fisheye_flattener" type="fisheye_flattener_node" name="flattener" output="screen">
-        <param name="cam_file" type ="string" value="$(find fisheye_flattener)/config/CM3_fish_camera_calib.yaml"/>
-        <param name="inputTopic" type ="string" value="/pg_17591763/image_raw"/>
-        <param name="outputTopicPrefix" type="string" value="flatImage"/>
-        <!-- rotationVector: addition rotational offset for remapping  -->
-        <param name="rotationVectorX" type="double" value="0"/> 
-        <param name="rotationVectorY" type="double" value="0"/> 
-        <param name="rotationVectorZ" type="double" value="0"/> 
-        <!-- FOV is in degree -->
-        <param name="fov" type="double" value="235"/> 
-        <!-- Image width for center reprojection -->
-        <param name="imgWidth" type="int" value="600"/> 
-    </node>
+  <node pkg="nodelet" type="nodelet" name="standalone_nodelet"  args="manager" output="screen"/>
+  <node pkg="nodelet" type="nodelet" name="MyNodeletClass" args="load fisheye_flattener standalone_nodelet" output="screen">
+    <param name="cam_file" type ="string" value="$(find fisheye_flattener)/config/CM3_fish_camera_calib.yaml"/>
+    <param name="inputTopic" type ="string" value="/pg_17591763/image_raw"/>
+    <param name="outputTopicPrefix" type="string" value="flatImage"/>
+    <!-- rotationVector: addition rotational offset for remapping  -->
+    <param name="rotationVectorX" type="double" value="0"/> 
+    <param name="rotationVectorY" type="double" value="0"/> 
+    <param name="rotationVectorZ" type="double" value="0"/> 
+    <!-- FOV is in degree -->
+    <param name="fov" type="double" value="235"/> 
+    <!-- Image width for center reprojection -->
+    <param name="imgWidth" type="int" value="600"/> 
+  </node>
 </launch>
-

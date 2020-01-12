@@ -1,0 +1,7 @@
+<library path="lib/libfisheye_flattener_nodelet">
+  <class name="fisheye_flattener" type="FisheyeFlattener::FisheyeFlattener" base_class_type="nodelet::Nodelet">
+  <description>
+    This is my FisheyeFlattener nodelet.
+  </description>
+  </class>
+</library>

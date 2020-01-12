@@ -39,6 +39,7 @@
   <depend>std_msgs</depend>
   <depend>camera_model</depend>
   <depend>cv_bridge</depend>
+  <depend>nodelet</depend>
   <!-- Use build_depend for packages you need at compile time: -->
   <!--   <build_depend>message_generation</build_depend> -->
   <!-- Use build_export_depend for packages you need in order to build against this package: -->
@@ -58,6 +59,6 @@
   <!-- The export tag contains other, unspecified, tags -->
   <export>
     <!-- Other tools can request additional information be placed here -->
-
+    <nodelet plugin="${prefix}/nodelet_plugins.xml" />
   </export>
 </package>

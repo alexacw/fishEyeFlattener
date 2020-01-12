@@ -6,16 +6,29 @@
 #include <camera_model/camera_models/CameraFactory.h>
 #include "cv_bridge/cv_bridge.h"
 #include <experimental/filesystem>
+#include <nodelet/nodelet.h>
 
-std::vector<cv::Mat> generateAllUndistMap(camera_model::CameraPtr p_cam,
-                                          Eigen::Vector3d rotation,
-                                          const unsigned &imgWidth,
-                                          const double &fov //degree
-);
+namespace FisheyeFlattener
+{
+class FisheyeFlattener : public nodelet::Nodelet
+{
+public:
+    virtual void onInit();
 
-cv::Mat genOneUndistMap(
-    camera_model::CameraPtr p_cam,
-    Eigen::AngleAxis<double> rotation,
-    const unsigned &imgWidth,
-    const unsigned &imgHeight,
-    const double &f);
+    std::vector<cv::Mat> generateAllUndistMap(
+        camera_model::CameraPtr p_cam,
+        Eigen::Vector3d rotation,
+        const unsigned &imgWidth,
+        const double &fov //degree
+    );
+
+    cv::Mat genOneUndistMap(
+        camera_model::CameraPtr p_cam,
+        Eigen::AngleAxisd rotation,
+        const unsigned &imgWidth,
+        const unsigned &imgHeight,
+        const double &f);
+
+    void imgCB(const sensor_msgs::Image::ConstPtr &msg);
+};
+} // namespace FisheyeFlattener
